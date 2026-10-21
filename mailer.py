@@ -1,8 +1,8 @@
-"""Send the briefing by SMTP. Works with Outlook.com / Microsoft 365 using an app password.
+"""Send the briefing by SMTP. Works with Gmail or Outlook/Microsoft 365 using an app password.
 
-Env vars (GitHub Secrets): SMTP_HOST (default smtp.office365.com), SMTP_PORT (587),
-SMTP_USER, SMTP_PASS. If Outlook blocks basic auth for your account, use a Gmail
-app password with smtp.gmail.com instead - the code is identical.
+Env vars (GitHub Secrets): SMTP_HOST (default smtp.gmail.com), SMTP_PORT (587),
+SMTP_USER, SMTP_PASS. Empty values fall back to defaults. A mail failure never
+crashes the run: the briefing is still saved to output/.
 """
 import os
 import smtplib
@@ -11,16 +11,27 @@ from email.mime.text import MIMEText
 
 
 def send(to, subject, html, text):
-    user, pw = os.environ.get("SMTP_USER"), os.environ.get("SMTP_PASS")
+    user = (os.environ.get("SMTP_USER") or "").strip()
+    pw = (os.environ.get("SMTP_PASS") or "").replace(" ", "").strip()
+    host = (os.environ.get("SMTP_HOST") or "").strip() or "smtp.gmail.com"
+    port = int((os.environ.get("SMTP_PORT") or "").strip() or 587)
     if not (user and pw):
-        print("SMTP creds not set - skipping email, report saved to output/ only.")
+        print("SMTP_USER / SMTP_PASS not set - skipping email, report saved to output/ only.")
+        return False
+    if "YOUR_OUTLOOK_ADDRESS" in to:
+        print("config.yaml email_to is still the placeholder - skipping email.")
         return False
     msg = MIMEMultipart("alternative")
     msg["Subject"], msg["From"], msg["To"] = subject, user, to
     msg.attach(MIMEText(text, "plain", "utf-8"))
     msg.attach(MIMEText(html, "html", "utf-8"))
-    with smtplib.SMTP(os.environ.get("SMTP_HOST", "smtp.office365.com"), int(os.environ.get("SMTP_PORT", 587))) as s:
-        s.starttls()
-        s.login(user, pw)
-        s.sendmail(user, [to], msg.as_string())
-    return True
+    try:
+        with smtplib.SMTP(host, port, timeout=30) as s:
+            s.starttls()
+            s.login(user, pw)
+            s.sendmail(user, [to], msg.as_string())
+        print(f"Email sent to {to}")
+        return True
+    except Exception as e:
+        print(f"EMAIL FAILED ({type(e).__name__}): {e}")
+        return False
